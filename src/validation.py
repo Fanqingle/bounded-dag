@@ -85,7 +85,7 @@ def validate(plan: Plan) -> list[dict[str, Any]]:
 
     path = _find_cycle_path(ids, {step.id: list(step.depends_on) for step in steps})
     if path is not None:
-        return [{"error": "cycle_detected", "path": path}]
+        return [{"error": "cycle_detected", "step_id": path[0], "path": path}]
     return []
 
 

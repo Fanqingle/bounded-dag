@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+StepState = Literal[
+    "PENDING",
+    "RUNNING",
+    "SUCCEEDED",
+    "FAILED",
+    "SKIPPED",
+    "CANCELLED",
+]
+RunStatus = Literal["SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"]
 
 
 class StepSpec(BaseModel):

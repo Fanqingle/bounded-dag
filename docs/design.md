@@ -58,7 +58,7 @@ CANCELLED 不写失败降级话术，final_text 仅标记取消。
 
 | 运行终态 | 判定条件 | final_text | 不这样会怎样 |
 | --- | --- | --- | --- |
-| SUCCEEDED | 全部步骤 SUCCEEDED | 正常汇总文本 | 无法区分“全成功”与“部分缺失” |
+| SUCCEEDED | 全部步骤 SUCCEEDED | 「已完成三家竞品对比。」 | 无法区分“全成功”与“部分缺失” |
 | FAILED | 任一 required 步骤 FAILED 或 SKIPPED | 「关键步骤 summarize 未能完成，本次未生成海报。」 | 关键缺失被当成 PARTIAL，输出不完整内容 |
 | PARTIAL | 有非必需步骤 FAILED / SKIPPED，且所有必需步骤 SUCCEEDED | 「竞品 C 的资料未查到，以下对比仅含 A、B。」 | 非关键缺失导致整次运行失败，浪费已完成结果 |
 | CANCELLED | 收到取消信号 | 仅标记取消，不写降级话术 | 取消被混入失败统计，污染运行指标 |
@@ -68,11 +68,17 @@ CANCELLED 不写失败降级话术，final_text 仅标记取消。
 - append-only 事件字段固定：seq（单调递增长整数）、ts（毫秒）、type、run_id、step_id（可空）、attempt（可空）、payload。
 不这样会怎样：字段漂移会让 SSE 客户端与快照解析器各自兼容，重放结果不一致。
 
-- 事件类型仅使用 run_started / step_queued / step_started / step_retry_scheduled / step_succeeded / step_failed / step_skipped / run_finished。
+- 事件类型仅使用 run_started / step_queued / step_started / step_retry_scheduled / step_succeeded / step_failed / step_skipped / step_cancelled / run_finished。
 不这样会怎样：新增类型会迫使前端分支膨胀，时间线语义失控。
 
-- step_queued 在步骤进入就绪队列时发出；step_started 在获得槽位后发出，携带 attempt。
-不这样会怎样：排队与执行无法区分，时间线无法解释并发等待。
+- step_queued 在每次把步骤放入就绪队列时发出一次，包括首次入队与退避结束后的重新入队，payload 为 {}；step_started 在获得槽位后发出，携带 attempt。
+不这样会怎样：排队与执行无法区分，时间线无法解释并发等待与重试排队。
+
+- step_cancelled 在取消时写：每个从 RUNNING 中止的步骤、每个从 PENDING 转 CANCELLED 的步骤各写一条，payload 为 {"reason": "run_cancelled"}。
+不这样会怎样：时间线无法逐步骤区分 CANCELLED 与尚未启动的 PENDING。
+
+- 重试退避期间步骤回到 PENDING，内部记 next_attempt_at（int | None），不进事件 payload；重新入队时清零。
+不这样会怎样：快照无法还原重连所需的等待状态，或把内部字段泄漏给前端。
 
 - step_retry_scheduled 在槽位释放后发出，payload 含退避时长与下一次 attempt；只有 max_attempts 用尽才发 step_failed。
 不这样会怎样：把重试当最终失败会提前终止运行，把重试当成功会掩盖错误。
@@ -91,7 +97,8 @@ CANCELLED 不写失败降级话术，final_text 仅标记取消。
 | self_dependency | depends_on 包含本步 id | 返回该步骤 id | 自环会进入死锁或无限重试 |
 | missing_dependency | depends_on 引用不存在的步骤 id | 返回缺失 id 与所属步骤 | 依赖永远无法满足，步骤卡在 PENDING |
 | unknown_tool | tool 不在 search / summarize / generate_image 中，或 tools 缺少对应 ToolConfig | 返回工具名 | 执行期才失败，破坏提交前的可预测性 |
-| cycle_detected | 依赖图存在环 | 输出具体路径，例如 s1→s2→s3→s1 | 只报“有环”无法定位修复点 |
+| invalid_deps_policy（规格扩展） | deps_policy 不属于 all / any / quorum:N | 返回步骤 id 与原值 | 非法策略落到执行期被当作 all，依赖判定静默出错 |
+| cycle_detected | 依赖图存在环 | 输出 step_id = path[0]，并输出具体路径，例如 s1→s2→s3→s1 | 只报“有环”无法定位修复点 |
 
-校验按 duplicate_step_id → self_dependency → missing_dependency → unknown_tool → cycle_detected 的顺序返回首个错误。
+校验按 duplicate_step_id → self_dependency → missing_dependency → unknown_tool → invalid_deps_policy → cycle_detected 的顺序返回首个错误。
 不这样会怎样：多个错误并存时返回不稳定，客户端难以复现。

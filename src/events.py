@@ -8,6 +8,33 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 
+EVENT_TYPES = (
+    "run_started",
+    "step_queued",
+    "step_started",
+    "step_retry_scheduled",
+    "step_succeeded",
+    "step_failed",
+    "step_skipped",
+    "step_cancelled",
+    "run_finished",
+)
+
+EVENT_PAYLOAD_KEYS: dict[str, frozenset[str]] = {
+    "run_started": frozenset({"n"}),
+    "step_queued": frozenset(),
+    "step_started": frozenset({"attempt"}),
+    "step_retry_scheduled": frozenset(
+        {"attempt", "retry_after_ms", "next_attempt"}
+    ),
+    "step_succeeded": frozenset({"duration_ms", "result_digest"}),
+    "step_failed": frozenset({"attempts", "error"}),
+    "step_skipped": frozenset({"reason"}),
+    "step_cancelled": frozenset({"reason"}),
+    "run_finished": frozenset({"status", "final_text"}),
+}
+
+
 class Clock(Protocol):
     def now(self) -> int:
         """Return a millisecond timestamp."""
@@ -45,6 +72,10 @@ class Event:
             "payload": self.payload or {},
         }
 
+    @property
+    def sse_id(self) -> str:
+        return str(self.seq)
+
 
 class EventLog:
     def __init__(self, run_id: str, clock: Clock) -> None:
@@ -61,15 +92,21 @@ class EventLog:
         attempt: int | None = None,
         payload: dict[str, Any] | None = None,
     ) -> Event:
+        if event_type not in EVENT_TYPES:
+            raise ValueError(f"unknown event type: {event_type}")
+        body = payload or {}
+        expected = EVENT_PAYLOAD_KEYS[event_type]
+        if frozenset(body) != expected:
+            raise ValueError(f"payload keys for {event_type} must be {sorted(expected)}")
         self._seq += 1
         event = Event(
             seq=self._seq,
-            ts=self._clock.now(),
+            ts=int(self._clock.now()),
             type=event_type,
             run_id=self.run_id,
             step_id=step_id,
             attempt=attempt,
-            payload=payload or {},
+            payload=body,
         )
         self._events.append(event)
         return event

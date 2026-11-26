@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import random
 from dataclasses import dataclass
 
@@ -48,22 +47,22 @@ class SimulatedTools:
     async def call(self, name: str, args: dict, timeout_ms: int) -> dict:
         config = self.configs.get(name) or ToolConfig()
         latency_ms = config.latency_ms * self.time_scale
-        budget_s = max(0.0, timeout_ms * self.time_scale / 1000.0)
+        budget_ms = timeout_ms * self.time_scale
 
         self.probe.enter()
         try:
-            try:
-                await asyncio.wait_for(self.clock.sleep(latency_ms), timeout=budget_s)
-            except asyncio.TimeoutError as exc:
-                raise ToolTimeout(f"{name} timed out after {budget_s:.3f}s") from exc
-
-            if self.rng.random() < config.failure_rate:
-                raise ToolError(f"{name} failed")
-
-            if name == "search":
-                return {"query": args.get("q", ""), "hits": 3}
-            if name == "summarize":
-                return {"summary": f"summary of {len(args.get('items', []))} items"}
-            return {"image": "placeholder"}
+            await self.clock.sleep(latency_ms)
         finally:
             self.probe.leave()
+
+        if latency_ms > budget_ms:
+            raise ToolTimeout(f"{name} timed out after {budget_ms}ms")
+
+        if self.rng.random() < config.failure_rate:
+            raise ToolError(f"{name} failed")
+
+        if name == "search":
+            return {"query": args.get("q", ""), "hits": 3}
+        if name == "summarize":
+            return {"summary": f"summary of {len(args.get('items', []))} items"}
+        return {"image": "placeholder"}

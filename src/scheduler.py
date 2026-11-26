@@ -11,12 +11,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from .events import Clock, Event, EventLog, RealClock
-from .models import RunRequest, StepSpec
+from .models import RunRequest, RunStatus, StepSpec, StepState
 from .tools import SimulatedTools, ToolError
 from .validation import validate, validate_request
 
 TERMINAL = {"SUCCEEDED", "FAILED", "SKIPPED", "CANCELLED"}
 BAD_STATES = {"FAILED", "SKIPPED"}
+NON_TERMINAL = {"PENDING", "RUNNING"}
 
 
 class PlanRejected(Exception):
@@ -28,18 +29,38 @@ class PlanRejected(Exception):
 @dataclass
 class RunResult:
     run_id: str
-    status: str
+    status: RunStatus
+    n: int
     final_text: str | None
-    states: dict[str, str]
+    states: dict[str, StepState]
     attempts: dict[str, int]
+    next_attempt_at: dict[str, int | None]
     events: list[Event]
 
     @property
     def last_seq(self) -> int:
         return self.events[-1].seq if self.events else 0
 
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "status": self.status,
+            "n": self.n,
+            "steps": [
+                {
+                    "id": step_id,
+                    "state": self.states[step_id],
+                    "attempts": self.attempts[step_id],
+                    "next_attempt_at": self.next_attempt_at[step_id],
+                }
+                for step_id in self.states
+            ],
+            "final_text": self.final_text if self.final_text else None,
+            "last_seq": self.last_seq,
+        }
 
-def _satisfied(step: StepSpec, states: dict[str, str]) -> bool:
+
+def _satisfied(step: StepSpec, states: dict[str, StepState]) -> bool:
     dep_states = [states[dep] for dep in step.depends_on]
     if not dep_states:
         return True
@@ -52,9 +73,11 @@ def _satisfied(step: StepSpec, states: dict[str, str]) -> bool:
     return succeeded >= int(policy.split(":", 1)[1])
 
 
-def _final_text(steps: dict[str, StepSpec], states: dict[str, str], status: str) -> str | None:
+def _final_text(
+    steps: dict[str, StepSpec], states: dict[str, StepState], status: RunStatus
+) -> str | None:
     if status == "SUCCEEDED":
-        return None
+        return "已完成三家竞品对比。"
     bad = [step_id for step_id in steps if states[step_id] in BAD_STATES]
     if status == "PARTIAL":
         labels: list[str] = []
@@ -69,10 +92,10 @@ def _final_text(steps: dict[str, StepSpec], states: dict[str, str], status: str)
             and steps[step_id].tool == "search"
             and steps[step_id].args.get("q")
         ]
-        tail = f"以下对比仅含 {', '.join(succeeded)}" if succeeded else "以下对比仅含其余结果"
-        return f"{', '.join(labels)} 的资料未查到，{tail}。"
+        tail = f"以下对比仅含 {'、'.join(succeeded)}" if succeeded else "以下对比仅含其余结果"
+        return f"{'、'.join(labels)} 的资料未查到，{tail}。"
     first = bad[0] if bad else "unknown"
-    return f"关键步骤 {first} 未能完成，本次未生成海报。"
+    return f"关键步骤 {steps[first].tool if first in steps else first} 未能完成，本次未生成海报。"
 
 
 class Run:
@@ -105,8 +128,9 @@ class Run:
             raise PlanRejected(errors)
 
         steps = {step.id: step for step in self.request.plan.steps}
-        states = {step_id: "PENDING" for step_id in steps}
+        states: dict[str, StepState] = {step_id: "PENDING" for step_id in steps}
         attempts = {step_id: 0 for step_id in steps}
+        next_attempt_at: dict[str, int | None] = {step_id: None for step_id in steps}
         waiting_retry: set[str] = set()
         enqueued: set[str] = set()
         ready: deque[str] = deque()
@@ -116,6 +140,11 @@ class Run:
         self.probe = tools.probe
         semaphore = asyncio.Semaphore(self.request.n)
         self.log.append("run_started", payload={"n": self.request.n})
+
+        def enqueue(step_id: str) -> None:
+            ready.append(step_id)
+            enqueued.add(step_id)
+            self.log.append("step_queued", step_id=step_id, payload={})
 
         def refresh() -> None:
             changed = True
@@ -133,8 +162,7 @@ class Run:
                     if any(state not in TERMINAL for state in dep_states):
                         continue
                     if _satisfied(step, states):
-                        ready.append(step_id)
-                        enqueued.add(step_id)
+                        enqueue(step_id)
                     else:
                         states[step_id] = "SKIPPED"
                         self.log.append(
@@ -144,7 +172,7 @@ class Run:
                         )
                         changed = True
 
-        async def attempt(step_id: str) -> tuple[str, int]:
+        async def attempt(step_id: str) -> tuple[str, float]:
             step = steps[step_id]
             error: str | None = None
             started_at = self.clock.now()
@@ -162,14 +190,12 @@ class Run:
                 except ToolError as exc:
                     error = str(exc)
                 except asyncio.CancelledError:
-                    states[step_id] = "CANCELLED"
                     raise
             finally:
                 semaphore.release()
 
             if self._cancel_requested:
-                states[step_id] = "CANCELLED"
-                return "CANCELLED", 0
+                return "CANCELLED", 0.0
             if error is None:
                 states[step_id] = "SUCCEEDED"
                 digest = hashlib.sha256(repr(result).encode()).hexdigest()[:12]
@@ -182,7 +208,7 @@ class Run:
                         "result_digest": digest,
                     },
                 )
-                return "SUCCEEDED", 0
+                return "SUCCEEDED", 0.0
             if attempts[step_id] >= step.max_attempts:
                 states[step_id] = "FAILED"
                 self.log.append(
@@ -191,11 +217,12 @@ class Run:
                     attempt=attempts[step_id],
                     payload={"attempts": attempts[step_id], "error": error},
                 )
-                return "FAILED", 0
+                return "FAILED", 0.0
 
             base = min(1000, 100 * 2 ** (attempts[step_id] - 1))
-            delay_ms = int(self.rng.randint(0, base) * self.request.time_scale)
+            delay_ms = self.rng.randint(0, base) * self.request.time_scale
             states[step_id] = "PENDING"
+            next_attempt_at[step_id] = int(self.clock.now() + delay_ms)
             self.log.append(
                 "step_retry_scheduled",
                 step_id=step_id,
@@ -233,20 +260,21 @@ class Run:
                     step_id = timers.pop(task)
                     if not self._cancel_requested:
                         waiting_retry.discard(step_id)
-                        ready.append(step_id)
-                        enqueued.add(step_id)
+                        next_attempt_at[step_id] = None
+                        enqueue(step_id)
                     continue
 
                 step_id = running.pop(task)
                 try:
                     outcome, delay_ms = task.result()
                 except asyncio.CancelledError:
-                    states[step_id] = "CANCELLED"
                     continue
                 if outcome == "RETRY":
                     waiting_retry.add(step_id)
 
-                    async def wait_retry(delay: int = delay_ms, target: str = step_id) -> str:
+                    async def wait_retry(
+                        delay: float = delay_ms, target: str = step_id
+                    ) -> str:
                         await self.clock.sleep(delay)
                         return target
 
@@ -265,9 +293,14 @@ class Run:
 
         if self._cancel_requested:
             for step_id, state in states.items():
-                if state not in TERMINAL:
+                if state in NON_TERMINAL:
+                    self.log.append(
+                        "step_cancelled",
+                        step_id=step_id,
+                        payload={"reason": "run_cancelled"},
+                    )
                     states[step_id] = "CANCELLED"
-            status = "CANCELLED"
+            status: RunStatus = "CANCELLED"
         elif any(
             steps[step_id].required and states[step_id] in BAD_STATES for step_id in steps
         ):
@@ -284,9 +317,11 @@ class Run:
         return RunResult(
             run_id=self.run_id,
             status=status,
+            n=self.request.n,
             final_text=final_text,
             states=states,
             attempts=attempts,
+            next_attempt_at=next_attempt_at,
             events=self.log.all(),
         )
 
