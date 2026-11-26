@@ -115,6 +115,32 @@ class Run:
         self.log = EventLog(self.run_id, self.clock)
         self._cancel_requested = False
         self._active_tasks: set[asyncio.Task] = set()
+        self.states: dict[str, StepState] = {}
+        self.attempts: dict[str, int] = {}
+        self.next_attempt_at: dict[str, int | None] = {}
+        self.status: str = "RUNNING"
+        self.final_text: str | None = None
+        self.result: RunResult | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        if self.result is not None:
+            return self.result.snapshot()
+        return {
+            "run_id": self.run_id,
+            "status": self.status,
+            "n": self.request.n,
+            "steps": [
+                {
+                    "id": step_id,
+                    "state": self.states[step_id],
+                    "attempts": self.attempts[step_id],
+                    "next_attempt_at": self.next_attempt_at[step_id],
+                }
+                for step_id in self.states
+            ],
+            "final_text": self.final_text,
+            "last_seq": self.log.last_seq,
+        }
 
     def cancel(self) -> None:
         self._cancel_requested = True
@@ -128,9 +154,13 @@ class Run:
             raise PlanRejected(errors)
 
         steps = {step.id: step for step in self.request.plan.steps}
-        states: dict[str, StepState] = {step_id: "PENDING" for step_id in steps}
-        attempts = {step_id: 0 for step_id in steps}
-        next_attempt_at: dict[str, int | None] = {step_id: None for step_id in steps}
+        states = self.states
+        attempts = self.attempts
+        next_attempt_at = self.next_attempt_at
+        for step_id in steps:
+            states[step_id] = "PENDING"
+            attempts[step_id] = 0
+            next_attempt_at[step_id] = None
         waiting_retry: set[str] = set()
         enqueued: set[str] = set()
         ready: deque[str] = deque()
@@ -314,7 +344,7 @@ class Run:
         self.log.append(
             "run_finished", payload={"status": status, "final_text": final_text}
         )
-        return RunResult(
+        result = RunResult(
             run_id=self.run_id,
             status=status,
             n=self.request.n,
@@ -324,6 +354,10 @@ class Run:
             next_attempt_at=next_attempt_at,
             events=self.log.all(),
         )
+        self.result = result
+        self.status = status
+        self.final_text = final_text
+        return result
 
 
 async def run(request: RunRequest, **kwargs: Any) -> RunResult:
