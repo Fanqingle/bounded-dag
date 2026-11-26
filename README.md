@@ -25,6 +25,14 @@
 
 决策记录计划放在 `docs/adr/`（尚未创建）。第一条：每个非显然取舍会在链路上留痕。后续每条记录说明取舍内容、理由与影响范围。
 
-## AI 工具与记录
+## AI 工具与假设
 
-本项目使用 AI 辅助。完整会话与工具调用记录放在 `ai-logs/`，用量热力图放在 `ai-logs/usage-heatmap/`；这两个目录目前尚未创建。
+本项目使用 AI 辅助。策略与设计讨论使用 WorkBuddy；编码与文件编辑使用 WorkBuddy 内置工具，版本控制使用 Git CLI。完整会话与工具调用记录放在 `ai-logs/`，用量热力图放在 `ai-logs/usage-heatmap/`；这两个目录目前尚未创建。
+
+沿用上一轮确认的关键假设：
+- 当前仓库根目录为本目录，首个提交只包含 README。
+- 状态集固定为 PENDING、RUNNING、SUCCEEDED、FAILED、SKIPPED、CANCELLED；重试退避期间步骤回到 PENDING。
+- 运行终态为 SUCCEEDED / FAILED / PARTIAL / CANCELLED 四值，取消不写失败降级话术。
+- `n` 缺省为 2，由 POST body 覆盖；任意时刻 RUNNING 步骤数不超过 n。
+- `python run.py` 与 `pytest -q` 为目标命令，实现完成后可用。
+- `docs/adr/` 归入 `docs/`；AI 记录目录为 `ai-logs/` 与 `ai-logs/usage-heatmap/`。
