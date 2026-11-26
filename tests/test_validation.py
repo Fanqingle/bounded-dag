@@ -22,7 +22,7 @@ def test_cycle_rejected() -> None:
     with pytest.raises(PlanRejected) as caught:
         asyncio.run(run(RunRequest(plan=plan)))
     assert caught.value.errors == [
-        {"error": "cycle_detected", "path": ["s1", "s2", "s3", "s1"]}
+        {"error": "cycle_detected", "step_id": "s1", "path": ["s1", "s2", "s3", "s1"]}
     ]
 
 

@@ -177,3 +177,91 @@ def test_skip_propagation(clock: FakeClock) -> None:
         if event.type == "step_skipped"
     }
     assert "sum" in skipped and "img" in skipped
+
+
+def test_timeout_retry(clock: FakeClock) -> None:
+    plan = make_plan(
+        [make_step("s1", args={"q": "A"}, timeout_ms=5, max_attempts=2)]
+    )
+    tools = {"search": ToolConfig(latency_ms=10, failure_rate=0.0)}
+    result = asyncio.run(
+        run(RunRequest(plan=plan, n=1, tools=tools), clock=clock, seed=1)
+    )
+    assert result.attempts["s1"] == 2
+    failed = [event for event in result.events if event.type == "step_failed"]
+    assert len(failed) == 1
+    assert "timed out" in failed[0].payload["error"]
+    assert result.status == "FAILED"
+
+
+def test_queue_event_present(clock: FakeClock) -> None:
+    plan = make_plan(
+        [
+            make_step("s1", args={"q": "A"}),
+            make_step("s2", "summarize", args={"items": ["A"]}, depends_on=["s1"]),
+        ]
+    )
+    result = asyncio.run(
+        run(RunRequest(plan=plan, n=1, tools=make_tools()), clock=clock, seed=1)
+    )
+    for step_id in ("s1", "s2"):
+        queued_at = _seq(result, "step_queued", step_id)
+        started_at = _seq(result, "step_started", step_id)
+        assert queued_at < started_at
+
+
+def test_snapshot_roundtrip(clock: FakeClock) -> None:
+    plan = make_plan([make_step("s1", args={"q": "A"})])
+    result = asyncio.run(
+        run(RunRequest(plan=plan, n=1, tools=make_tools()), clock=clock, seed=1)
+    )
+    snapshot = result.snapshot()
+    assert set(snapshot) == {
+        "run_id", "status", "n", "steps", "final_text", "last_seq"
+    }
+    assert snapshot["run_id"] == result.run_id
+    assert snapshot["status"] == result.status
+    assert snapshot["n"] == 1
+    assert snapshot["last_seq"] == result.last_seq == result.events[-1].seq
+    assert snapshot["final_text"] == result.final_text == "已完成三家竞品对比。"
+    assert snapshot["steps"] == [
+        {"id": "s1", "state": "SUCCEEDED", "attempts": 1, "next_attempt_at": None}
+    ]
+
+
+def test_partial_text(clock: FakeClock) -> None:
+    plan = make_plan(
+        [
+            make_step("s1", args={"q": "A"}),
+            make_step("s2", args={"q": "B"}),
+            make_step(
+                "s3",
+                args={"q": "C"},
+                required=False,
+                max_attempts=1,
+                timeout_ms=1,
+            ),
+            make_step(
+                "sum",
+                "summarize",
+                args={"items": ["A", "B", "C"]},
+                depends_on=["s1", "s2", "s3"],
+                deps_policy="quorum:2",
+            ),
+            make_step(
+                "img",
+                "generate_image",
+                args={"prompt": "poster"},
+                depends_on=["sum"],
+            ),
+        ]
+    )
+    result = asyncio.run(
+        run(RunRequest(plan=plan, n=3, tools=make_tools(latency_ms=10)),
+            clock=clock, seed=1)
+    )
+    assert result.status == "PARTIAL"
+    assert result.states["s3"] == "FAILED"
+    assert "竞品 C" in result.final_text
+    assert "A、B" in result.final_text
+    assert "，" in result.final_text
