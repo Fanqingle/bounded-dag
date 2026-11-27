@@ -36,3 +36,9 @@
 ## 4. 无法导出工具调用的工具
 
 本题未使用此类工具。Claude Code 本机无本题历史会话，因此没有对应记录可导出。
+
+## 用量热力图
+
+- 数据源：WorkBuddy 本地 `workbuddy.db` 的 `sessions` 表（只读打开），每日口径为当天的会话数，按 `created_at` 的日期聚合。
+- 生成脚本：`ai-logs/usage-heatmap/generate_heatmap.py`，输出 `ai-logs/usage-heatmap/usage-heatmap.png`。
+- 覆盖日期范围：2026-06-06 至 2026-11-27，共 106 个有数据的日期，超过三个月的下限要求。
