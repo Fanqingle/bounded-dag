@@ -99,15 +99,13 @@ async def example() -> JSONResponse:
                     "tool": "search",
                     "args": {"q": "C"},
                     "required": False,
-                    "max_attempts": 1,
-                    "timeout_ms": 1,
                 },
                 {
                     "id": "sum",
                     "tool": "summarize",
                     "args": {"items": ["A", "B", "C"]},
                     "depends_on": ["s1", "s2", "s3"],
-                    "deps_policy": "quorum:2",
+                    "deps_policy": "any",
                 },
                 {
                     "id": "img",
@@ -117,11 +115,11 @@ async def example() -> JSONResponse:
                 },
             ]
         },
-        n=3,
+        n=2,
         tools={
-            "search": {"latency_ms": 10, "failure_rate": 0.0},
-            "summarize": {"latency_ms": 10, "failure_rate": 0.0},
-            "generate_image": {"latency_ms": 10, "failure_rate": 0.0},
+            "search": {"latency_ms": 400, "failure_rate": 0.0},
+            "summarize": {"latency_ms": 300, "failure_rate": 0.0},
+            "generate_image": {"latency_ms": 900, "failure_rate": 0.0},
         },
         time_scale=1.0,
     )
