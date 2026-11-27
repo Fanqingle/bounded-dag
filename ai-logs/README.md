@@ -6,13 +6,15 @@
 
 - WorkBuddy：本题全程使用，覆盖策略与设计讨论、规格裁决落地、源码与文档编写、测试执行与提交整理。
 - 本机 Git CLI：版本控制操作（init / add / commit / push）。
-- 模型：WorkBuddy default model。本机 `workbuddy.db` 的 `sessions` 表将该会话的模型标识记录为 `hy4flash-free`。
+- 模型：会话 trace 中实际出现两个模型标识，`hy4-flash-free`（384 次调用）与 `deepseek-v4.1-flash`（57 次调用）；本机 `workbuddy.db` 的 `sessions` 表将该会话的模型标识记录为 `hy4flash-free`（无连字符写法）。
 
 除上述工具外，本题未使用其它 AI 编码工具。
 
 ## 2. 文件与导出方式
 
-- `ai-logs/workbuddy/session-d9d8d2a9.jsonl`：WorkBuddy 会话的原生 JSONL trace，从 WorkBuddy 会话目录原样复制。文件包含 `message`、`function_call`、`function_call_result`、`reasoning`、`file-history-snapshot` 等记录类型，未经格式化、截断或摘要；唯一允许的编辑是密钥打码。本次对 `sk-`、`token`、`password`、`api_key`、`Bearer` 等模式做了全文扫描，未发现命中，因此复制前后逐字节一致。
+- `ai-logs/workbuddy/session-d9d8d2a9.jsonl`：WorkBuddy 会话的原生 JSONL trace，从 WorkBuddy 会话目录原样复制。文件包含 `message`、`function_call`、`function_call_result`、`reasoning`、`file-history-snapshot`、`session-meta`、`ai-title`、`resend-fork-notice` 全部记录类型，未经格式化、截断或摘要；唯一允许的编辑是密钥打码。
+- 最终快照于全部代码提交完成后重新采集，共 535 行，sha256 为 `afed766d768629cd140f4725498c816abddb42b7270ad728630435cf1b1c66e3`，与会话目录源文件逐字节一致（`cmp` 通过）。
+- 密钥检查：对 `sk-` 后接 20 位以上字母数字、`Bearer` 后接 20 位以上令牌、以及 `api_key` / `password` / `token` 后接赋值字面量三类严格模式全文扫描，命中 0 处，无需打码。此前对裸词 `token` 的宽松扫描命中的是提示词正文里的说明文字，不是密钥值。
 
 ## 3. 会话与提交的对应关系
 
@@ -31,7 +33,10 @@
 11. `8a140ee` fix example plan to match demo script：把示例规划改为标准五步配置，由调试面板调高失败率触发 PARTIAL。
 12. `b84fb44` add timeline and debug panel ui：加入纯 TypeScript 前端，提供并发折线、时间线、事件流水与调试面板。
 
-本次收尾包含三次提交：先让干净克隆可直接运行（`4239cd7`），再归档完整会话 trace，最后生成本地用量热力图。上述第 12 次提交之后的对话段落对应本次收尾。
+13. `4239cd7` make clean clone runnable：让干净克隆一条命令启动，补充前端依赖前置条件。
+14. `63c6af7` add complete ai session logs：归档完整会话 trace 与导出说明。
+15. `ad8377f` add agent usage heatmap：生成本地用量热力图并追加说明。
+16. 最终快照提交：在第 15 次提交推送后重新采集会话 trace（535 行），补齐上述收尾三次提交的对应关系，并修正模型标识为 trace 中的实际值。此提交只含 `ai-logs/`，符合题目第 7 节对最后一次导出的规定。
 
 ## 4. 无法导出工具调用的工具
 
