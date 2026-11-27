@@ -19,6 +19,12 @@ def build_frontend() -> Path | None:
         print("frontend directory not found; skipping static mount")
         return None
     if (frontend / "package.json").exists():
+        if not (frontend / "node_modules").exists():
+            subprocess.run(
+                ["npm", "install", "--no-audit", "--no-fund"],
+                cwd=frontend,
+                check=True,
+            )
         subprocess.run(["npm", "run", "build"], cwd=frontend, check=True)
     dist = frontend / "dist"
     if not dist.exists():

@@ -16,7 +16,9 @@
 
 ## 快速开始
 
-以下命令为目标命令，标注待实现；仓库目前没有任何代码，执行它们不会得到实际结果。实现完成后可用它们启动执行器与运行测试。
+前置条件：Python 3.11+；Node.js 18+ 与 npm（仅构建前端时需要）。
+
+一条命令启动：`python run.py`。该命令会自动安装前端依赖（当 `frontend/node_modules` 不存在时执行 `npm install --no-audit --no-fund`）并构建前端，然后同时提供 API 与静态页面；若 `frontend/` 目录不存在则跳过静态挂载，只提供 API。
 
 - 启动：`python run.py`
 - 测试：`pytest -q`
