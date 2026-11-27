@@ -42,6 +42,44 @@ class GatedClock:
         self.t += ms
 
 
+class BarrierClock:
+    """Holds the first `parties` sleeps until all of them have arrived."""
+
+    def __init__(self, parties: int) -> None:
+        self.t = 0
+        self.parties = parties
+        self.arrived = 0
+        self.gate = asyncio.Event()
+        self.all_arrived = asyncio.Event()
+
+    def now(self) -> int:
+        return self.t
+
+    async def sleep(self, ms: float) -> None:
+        self.arrived += 1
+        if self.arrived >= self.parties:
+            self.all_arrived.set()
+        await self.gate.wait()
+        self.t += ms
+
+
+class DeterministicRng:
+    """Returns a fixed point inside randint() and a fixed draw in random()."""
+
+    def __init__(self, mode: str = "middle") -> None:
+        self.mode = mode
+
+    def randint(self, a: int, b: int) -> int:
+        if self.mode == "max":
+            return b
+        if self.mode == "min":
+            return a
+        return (a + b) // 2
+
+    def random(self) -> float:
+        return 0.5
+
+
 @pytest.fixture
 def clock() -> FakeClock:
     return FakeClock()
