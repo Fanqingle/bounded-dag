@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>bounded-dag</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #1f2937;
+        background: #f8fafc;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 16px; }
+      h1 { font-size: 20px; margin: 0 0 12px; }
+      h2 { font-size: 15px; margin: 0 0 8px; }
+      .grid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr); gap: 16px; }
+      .panel { background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; }
+      textarea { width: 100%; height: 260px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+      .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+      .tool-row { display: grid; grid-template-columns: 110px 1fr; gap: 4px 8px; font-size: 12px; border-top: 1px solid #e2e8f0; padding: 6px 0; }
+      .tool-row .name { font-weight: 600; grid-row: span 2; align-self: center; }
+      .tool-row label { display: flex; align-items: center; gap: 6px; }
+      .tool-row input[type="range"] { flex: 1; }
+      output { min-width: 42px; font-family: ui-monospace, monospace; }
+      button { padding: 6px 12px; cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: 0.55; }
+      pre.errors { white-space: pre-wrap; word-break: break-word; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 4px; padding: 8px; min-height: 24px; font-size: 12px; }
+      .status { font-family: ui-monospace, monospace; font-size: 12px; margin: 6px 0; }
+      .final { font-size: 13px; margin-bottom: 8px; }
+      .stack { display: flex; flex-direction: column; gap: 16px; }
+      svg { width: 100%; height: auto; display: block; }
+      .timeline-row { display: grid; grid-template-columns: 90px 1fr 80px; align-items: center; gap: 6px; margin: 3px 0; font-size: 12px; }
+      .track { position: relative; height: 18px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 3px; }
+      .seg { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 2px; font-size: 10px; line-height: 18px; text-align: center; overflow: hidden; white-space: nowrap; }
+      .queued { background: #cbd5e1; color: #0f172a; }
+      .running { background: #93c5fd; color: #0f172a; }
+      .retry_wait { background: #fcd34d; color: #0f172a; }
+      .failed { background: #fca5a5; color: #450a0a; }
+      .skipped { background: #d8b4fe; color: #3b0764; }
+      .cancelled { background: #fed7aa; color: #7c2d12; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td { text-align: left; border-bottom: 1px solid #e2e8f0; padding: 3px 6px; }
+      summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+      .axis { font-size: 11px; color: #64748b; display: flex; justify-content: space-between; }
+    </style>
+  </head>
+  <body>
+    <h1>bounded-dag</h1>
+    <div class="grid">
+      <section class="panel">
+        <h2>Plan and controls</h2>
+        <textarea id="plan-input" spellcheck="false" aria-label="plan json"></textarea>
+        <div class="row">
+          <button id="load-example" type="button">Load example</button>
+          <label>N <input id="concurrency" type="number" min="1" max="64" step="1" value="2" /></label>
+        </div>
+        <h2>Tool simulation</h2>
+        <div class="tool-row">
+          <span class="name">search</span>
+          <label>latency_ms <input id="latency-search" type="range" min="0" max="2000" step="50" value="400" /><output id="latency-search-out">400</output></label>
+          <label>failure_rate <input id="rate-search" type="range" min="0" max="1" step="0.05" value="0" /><output id="rate-search-out">0.00</output></label>
+        </div>
+        <div class="tool-row">
+          <span class="name">summarize</span>
+          <label>latency_ms <input id="latency-summarize" type="range" min="0" max="2000" step="50" value="300" /><output id="latency-summarize-out">300</output></label>
+          <label>failure_rate <input id="rate-summarize" type="range" min="0" max="1" step="0.05" value="0" /><output id="rate-summarize-out">0.00</output></label>
+        </div>
+        <div class="tool-row">
+          <span class="name">generate_image</span>
+          <label>latency_ms <input id="latency-generate_image" type="range" min="0" max="2000" step="50" value="900" /><output id="latency-generate_image-out">900</output></label>
+          <label>failure_rate <input id="rate-generate_image" type="range" min="0" max="1" step="0.05" value="0" /><output id="rate-generate_image-out">0.00</output></label>
+        </div>
+        <div class="row">
+          <button id="run-button" type="button">Run</button>
+          <button id="cancel-button" type="button" disabled>Cancel</button>
+        </div>
+        <div id="status" class="status">no run</div>
+        <div id="final-text" class="final"></div>
+        <pre id="errors" class="errors"></pre>
+        <details>
+          <summary>Recent runs (duration comparison)</summary>
+          <table><thead><tr><th>run_id</th><th>N</th><th>status</th><th>duration_ms</th></tr></thead><tbody id="run-history"></tbody></table>
+        </details>
+      </section>
+      <div class="stack">
+        <section class="panel">
+          <h2>Concurrency</h2>
+          <div id="concurrency-chart"></div>
+        </section>
+        <section class="panel">
+          <h2>Timeline</h2>
+          <div id="timeline"></div>
+          <div class="axis"><span>earlier seq</span><span>later seq</span></div>
+        </section>
+        <section class="panel">
+          <details id="event-log">
+            <summary>Event stream</summary>
+            <table>
+              <thead><tr><th>seq</th><th>type</th><th>step_id</th><th>attempt</th></tr></thead>
+              <tbody id="event-table"></tbody>
+            </table>
+          </details>
+        </section>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
